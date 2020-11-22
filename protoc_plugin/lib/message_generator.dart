@@ -360,40 +360,19 @@ class MessageGenerator extends ProtobufContainer {
       out.print('factory $classname(');
       if (_fieldList.isNotEmpty) {
         out.println('{');
-        for (final field in _fieldList) {
-          _emitDeprecatedIf(field.isDeprecated, out);
-          if (field.isRepeated && !field.isMapField) {
-            out.println(
-                '  ${field.baseType.getRepeatedDartTypeIterable(fileGen)}? ${field.memberNames.fieldName},');
-          } else {
-            out.println(
-                '  ${field.getDartType(fileGen)}? ${field.memberNames.fieldName},');
-          }
-        }
+        _emitConstructorFields(out);
+        out.println('  $_coreImportPrefix.bool freeze = true,');
         out.print('}');
-      }
-      if (_fieldList.isNotEmpty) {
         out.println(') {');
         out.println('  final _result = create();');
-        for (final field in _fieldList) {
-          out.println('  if (${field.memberNames.fieldName} != null) {');
-          if (field.isDeprecated) {
-            out.println(
-                '    // ignore: deprecated_member_use_from_same_package');
-          }
-          if (field.isRepeated || field.isMapField) {
-            out.println(
-                '    _result.${field.memberNames.fieldName}.addAll(${field.memberNames.fieldName});');
-          } else {
-            out.println(
-                '    _result.${field.memberNames.fieldName} = ${field.memberNames.fieldName};');
-          }
-          out.println('  }');
-        }
+        _emitConstructorSetters(out);
+        out.println('  if (freeze) {');
+        out.println('    _result.freeze();');
+        out.println('  }');
         out.println('  return _result;');
         out.println('}');
       } else {
-        out.println(') => create();');
+        out.println(') => create()..freeze();');
       }
       out.println(
           'factory ${classname}.fromBuffer($_coreImportPrefix.List<$_coreImportPrefix.int> i,'
@@ -402,20 +381,23 @@ class MessageGenerator extends ProtobufContainer {
       out.println('factory ${classname}.fromJson($_coreImportPrefix.String i,'
           ' [$_protobufImportPrefix.ExtensionRegistry r = $_protobufImportPrefix.ExtensionRegistry.EMPTY])'
           ' => create()..mergeFromJson(i, r);');
+
       out.println('''@$_coreImportPrefix.Deprecated(
 'Using this can add significant overhead to your binary. '
 'Use [GeneratedMessageGenericExtensions.deepCopy] instead. '
 'Will be removed in next major version\')''');
       out.println('${classname} clone() =>'
           ' ${classname}()..mergeFromMessage(this);');
-      out.println('''@$_coreImportPrefix.Deprecated(
-'Using this can add significant overhead to your binary. '
-'Use [GeneratedMessageGenericExtensions.rebuild] instead. '
-'Will be removed in next major version\')''');
-      out.println('$classname copyWith(void Function($classname) updates) =>'
-          ' super.copyWith((message) => updates(message as $classname))'
-          ' as $classname;'
-          ' // ignore: deprecated_member_use');
+      out.println(
+          '${classname} toBuilder() => super.toBuilder() as ${classname};');
+
+      if (_fieldList.isNotEmpty) {
+        out.print('\n$classname rebuildWith({');
+        _emitConstructorFields(out);
+        out.println('}) => this.rebuild(($classname _result) {');
+        _emitConstructorSetters(out, clearMapAndRepeated: true);
+        out.println('});\n');
+      }
 
       out.println('$_protobufImportPrefix.BuilderInfo get info_ => _i;');
 
@@ -536,12 +518,12 @@ class MessageGenerator extends ProtobufContainer {
       }
     } else {
       var fastSetter = field.baseType.setter;
-      _emitDeprecatedIf(field.isDeprecated, out);
+      // _emitDeprecatedIf(field.isDeprecated, out);
       _emitOverrideIf(field.overridesSetter, out);
       _emitIndexAnnotation(field.number, out);
       if (fastSetter != null) {
         out.printlnAnnotated(
-            'set ${names.fieldName}'
+            'set _${names.fieldName}'
             '($fieldTypeString v) { '
             '$fastSetter(${field.index}, v);'
             ' }',
@@ -553,7 +535,7 @@ class MessageGenerator extends ProtobufContainer {
             ]);
       } else {
         out.printlnAnnotated(
-            'set ${names.fieldName}'
+            'set _${names.fieldName}'
             '($fieldTypeString v) { '
             'setField(${field.number}, v);'
             ' }',
@@ -568,7 +550,7 @@ class MessageGenerator extends ProtobufContainer {
       _emitOverrideIf(field.overridesHasMethod, out);
       _emitIndexAnnotation(field.number, out);
       out.printlnAnnotated(
-          '$_coreImportPrefix.bool ${names.hasMethodName}() =>'
+          '$_coreImportPrefix.bool get ${names.hasMethodName} =>'
           ' \$_has(${field.index});',
           [
             NamedLocation(
@@ -576,18 +558,18 @@ class MessageGenerator extends ProtobufContainer {
                 fieldPathSegment: memberFieldPath,
                 start: '$_coreImportPrefix.bool '.length)
           ]);
-      _emitDeprecatedIf(field.isDeprecated, out);
-      _emitOverrideIf(field.overridesClearMethod, out);
-      _emitIndexAnnotation(field.number, out);
-      out.printlnAnnotated(
-          'void ${names.clearMethodName}() =>'
-          ' clearField(${field.number});',
-          [
-            NamedLocation(
-                name: names.clearMethodName,
-                fieldPathSegment: memberFieldPath,
-                start: 'void '.length)
-          ]);
+      // _emitDeprecatedIf(field.isDeprecated, out);
+      // _emitOverrideIf(field.overridesClearMethod, out);
+      // _emitIndexAnnotation(field.number, out);
+      // out.printlnAnnotated(
+      //     'void ${names.clearMethodName}() =>'
+      //     ' clearField(${field.number});',
+      //     [
+      //       NamedLocation(
+      //           name: names.clearMethodName,
+      //           fieldPathSegment: memberFieldPath,
+      //           start: 'void '.length)
+      //     ]);
       if (field.baseType.isMessage) {
         _emitDeprecatedIf(field.isDeprecated, out);
         _emitIndexAnnotation(field.number, out);
@@ -636,6 +618,39 @@ class MessageGenerator extends ProtobufContainer {
     return '\$_get($index, $defaultExpr)';
   }
 
+  void _emitConstructorFields(IndentingWriter out) {
+    for (final field in _fieldList) {
+      _emitDeprecatedIf(field.isDeprecated, out);
+      if (field.isRepeated && !field.isMapField) {
+        out.println(
+            '  ${field.baseType.getRepeatedDartTypeIterable(fileGen)}? ${field.memberNames.fieldName},');
+      } else {
+        out.println(
+            '  ${field.getDartType(fileGen)}? ${field.memberNames.fieldName},');
+      }
+    }
+  }
+
+  void _emitConstructorSetters(
+    IndentingWriter out, {
+    bool clearMapAndRepeated = false,
+  }) {
+    for (final field in _fieldList) {
+      out.println('  if (${field.memberNames.fieldName} != null) {');
+      if (field.isDeprecated) {
+        out.println('    // ignore: deprecated_member_use_from_same_package');
+      }
+      if (field.isRepeated || field.isMapField) {
+        out.println(
+            '    _result.${field.memberNames.fieldName}${clearMapAndRepeated ? "..clear()." : ""}.addAll(${field.memberNames.fieldName});');
+      } else {
+        out.println(
+            '    _result._${field.memberNames.fieldName} = ${field.memberNames.fieldName};');
+      }
+      out.println('  }');
+    }
+  }
+
   void _emitDeprecatedIf(bool condition, IndentingWriter out) {
     if (condition) {
       out.println(
@@ -650,7 +665,7 @@ class MessageGenerator extends ProtobufContainer {
   }
 
   void _emitIndexAnnotation(int index, IndentingWriter out) {
-    out.println('@$_protobufImportPrefix.TagNumber($index)');
+    // out.println('@$_protobufImportPrefix.TagNumber($index)');
   }
 
   void generateEnums(IndentingWriter out) {
